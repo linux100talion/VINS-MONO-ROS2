@@ -137,13 +137,10 @@ getMeasurements()
 
 void imu_callback(const sensor_msgs::msg::Imu::SharedPtr imu_msg)
 {
-    if ((imu_msg->header.stamp.sec+imu_msg->header.stamp.nanosec * (1e-9)) <= last_imu_t)
-    {
-        RCUTILS_LOG_WARN("imu message in disorder!");
-        return;
-    }
-
-    last_imu_t = imu_msg->header.stamp.sec+imu_msg->header.stamp.nanosec * (1e-9);
+    double t = imu_msg->header.stamp.sec + imu_msg->header.stamp.nanosec * 1e-9;
+    if (t <= last_imu_t)
+        return;  // skip: sim /clock (~155Hz) slower than IMU (250Hz) — duplicate timestamp
+    last_imu_t = t;
 
     m_buf.lock();
     imu_buf.push(imu_msg);
