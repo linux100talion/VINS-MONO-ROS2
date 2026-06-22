@@ -60,7 +60,17 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
         residual = pre_integration->evaluate(Pi, Qi, Vi, Bai, Bgi,
                                             Pj, Qj, Vj, Baj, Bgj);
 
-        Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration->covariance.inverse()).matrixL().transpose();
+        // Guard: if no IMU was integrated (sum_dt≈0), inverting a zero covariance
+        // gives Inf/garbage → sqrt_info~1e28 → Ceres diverges → system reboot.
+        // Use a weak diagonal prior (sqrt_info≈100) for empty windows so VINS
+        // can still optimize (with a loose IMU constraint) instead of crashing.
+        Eigen::Matrix<double, 15, 15> cov = pre_integration->covariance;
+        if (pre_integration->sum_dt < 1e-4) {
+            RCUTILS_LOG_WARN("IMUFactor: empty preintegration (sum_dt=%.6f s), using prior",
+                             pre_integration->sum_dt);
+            cov = 1e-4 * Eigen::Matrix<double, 15, 15>::Identity();
+        }
+        Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(cov.inverse()).matrixL().transpose();
         //sqrt_info.setIdentity();
         residual = sqrt_info * residual;
 
@@ -103,9 +113,9 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 
                 if (jacobian_pose_i.maxCoeff() > 1e8 || jacobian_pose_i.minCoeff() < -1e8)
                 {
-                    RCUTILS_LOG_WARN("numerical unstable in preintegration [check2 pose_i=%.2e sqrt_info_max=%.2e]",
+                    RCUTILS_LOG_WARN("numerical unstable in preintegration [check2 pose_i=%.2e sqrt_info_max=%.2e sum_dt=%.4f]",
                         std::max(std::abs(jacobian_pose_i.maxCoeff()), std::abs(jacobian_pose_i.minCoeff())),
-                        sqrt_info.cwiseAbs().maxCoeff());
+                        sqrt_info.cwiseAbs().maxCoeff(), pre_integration->sum_dt);
                 }
             }
             if (jacobians[1])
