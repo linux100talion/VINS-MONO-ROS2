@@ -68,7 +68,7 @@ void axis_generate(visualization_msgs::msg::Marker &line_list, Vector3d &origin,
     line_list.type = visualization_msgs::msg::Marker::LINE_LIST;
     line_list.scale.x = 0.1;
     line_list.color.a = 1.0;
-    line_list.lifetime = rclcpp::Duration(0);
+    line_list.lifetime = rclcpp::Duration(0, 0);
     
     line_list.pose.orientation.w = 1.0;
     line_list.color.b = 1.0;
@@ -124,7 +124,7 @@ void cube_generate(visualization_msgs::msg::Marker &marker, Vector3d &origin, in
     marker.color.b = 0.0f;
     marker.color.a = 1.0;
 
-    marker.lifetime = rclcpp::Duration(0);  
+    marker.lifetime = rclcpp::Duration(0, 0);  
     geometry_msgs::msg::Point p;
     p.x = origin.x();
     p.y = origin.y();
