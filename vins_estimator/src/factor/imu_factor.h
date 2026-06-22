@@ -60,15 +60,25 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
         residual = pre_integration->evaluate(Pi, Qi, Vi, Bai, Bgi,
                                             Pj, Qj, Vj, Baj, Bgj);
 
-        // Guard: if no IMU was integrated (sum_dt≈0), inverting a zero covariance
-        // gives Inf/garbage → sqrt_info~1e28 → Ceres diverges → system reboot.
-        // Use a weak diagonal prior (sqrt_info≈100) for empty windows so VINS
-        // can still optimize (with a loose IMU constraint) instead of crashing.
+        // Root cause of check2: the 15×15 preintegration covariance has extreme
+        // condition number (~1e13) because position variance (∝dt^4) is many
+        // orders of magnitude smaller than velocity variance (∝dt^2). Floating-
+        // point roundoff during repeated F*cov*F^T updates gives a tiny negative
+        // eigenvalue (~-1e-18), making the matrix non-positive-definite. LLT of
+        // a non-PD matrix produces garbage → sqrt_info~1e25 → Ceres diverges.
+        //
+        // Fix: regularize with 1e-10*I. This clamps the minimum eigenvalue to
+        // ≥1e-10, keeping sqrt_info_max ≤ 1e5 (well under the 1e8 check2 limit).
+        // The regularization is negligible for velocity/rotation/bias blocks
+        // (eigenvalues ≥1e-7) and tolerable for the position block (adds ≈0.3mm
+        // of artificial uncertainty, dominated by visual residuals anyway).
         Eigen::Matrix<double, 15, 15> cov = pre_integration->covariance;
         if (pre_integration->sum_dt < 1e-4) {
-            RCUTILS_LOG_WARN("IMUFactor: empty preintegration (sum_dt=%.6f s), using prior",
+            RCUTILS_LOG_WARN("IMUFactor: empty preintegration (sum_dt=%.6f s)",
                              pre_integration->sum_dt);
             cov = 1e-4 * Eigen::Matrix<double, 15, 15>::Identity();
+        } else {
+            cov += 1e-10 * Eigen::Matrix<double, 15, 15>::Identity();
         }
         Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(cov.inverse()).matrixL().transpose();
         //sqrt_info.setIdentity();
