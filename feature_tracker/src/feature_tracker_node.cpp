@@ -80,6 +80,16 @@ void img_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
     else
         ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
 
+    // Защита 13.17: кадр неожиданного размера (гонка на старте v4l2-пайплайна
+    // симуляции) раньше валил ноду cv::Exception'ом в rowRange — а launch её не
+    // перезапускает, VINS оставался без фич до конца полёта. Пропускаем кадр.
+    if (ptr->image.rows < ROW * NUM_OF_CAM || ptr->image.cols < COL)
+    {
+        RCUTILS_LOG_WARN("img %dx%d меньше ожидаемого %dx%d — кадр пропущен",
+                         ptr->image.cols, ptr->image.rows, (int)COL, (int)ROW);
+        return;
+    }
+
     cv::Mat show_img = ptr->image;
     // cv::imshow("img", show_img);
     // cv::waitKey(0);
