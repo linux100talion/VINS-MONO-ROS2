@@ -26,7 +26,7 @@ bool first_image_flag = true;
 double last_image_time = 0;
 bool init_pub = 0;
 
-void img_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
+void img_callback_impl(const sensor_msgs::msg::Image::SharedPtr img_msg)
 {
     if(first_image_flag)
     {
@@ -218,6 +218,25 @@ void img_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
         }
     }
     // RCUTILS_LOG_INFO("whole feature tracker processing costs: %fms", t_r.toc());
+}
+
+// Защита 13.17, слой 2 (2026-08-20): гвард размера в img_callback_impl не
+// покрыл реальное падение (rowRange-assert при живом гварде на кадре холодного
+// старта v4l2-пайплайна) — а смерть ноды = VINS без фич до конца полёта
+// (launch её не перезапускает). Ошибка OpenCV на ОДНОМ кадре при 30 fps —
+// мусорный кадр: логируем фактические размеры (диагноз причины) и пропускаем.
+void img_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
+{
+    try
+    {
+        img_callback_impl(img_msg);
+    }
+    catch (const cv::Exception &e)
+    {
+        RCUTILS_LOG_WARN("cv::Exception на кадре %ux%u step=%u enc=%s: %s — кадр пропущен",
+                         img_msg->width, img_msg->height, img_msg->step,
+                         img_msg->encoding.c_str(), e.what());
+    }
 }
 
 int main(int argc, char **argv)
