@@ -188,8 +188,35 @@ void FeatureTracker::rejectWithF()
             un_forw_pts[i] = cv::Point2f(tmp_p.x(), tmp_p.y());
         }
 
+        // Патч 13.17 (2026-08-28): на НЕПОДВИЖНОМ борту кадры бит-в-бит одинаковы,
+        // LK даёт сдвиг ровно 0, и findFundamentalMat получает два ИДЕНТИЧНЫХ набора
+        // точек. Для ~0.3% таких наборов OpenCV 4.10 бросает cv::Exception
+        // (run7Point → solveCubic=-1 → rowRange(0,-3), matrix.cpp:766); набор точек
+        // на земле заморожен, seed RANSAC постоянный → исключение на КАЖДОМ кадре по
+        // 20-150 с (шторм), пока сцена не изменится. try/catch в img_callback его
+        // глотал ПОСЛЕ last_image_time=t и ДО pub_count++ → /feature молчал 7-48 с без
+        // discontinuity-сброса, потом выплата долга freq-контроля на 30 Гц.
+        // Эпиполярный тест без сдвига бессмыслен (F вырождена, выбросы по геометрии
+        // не отличить) — пропускаем его, оставляя все точки; исключение на всякий
+        // случай ловим и здесь: кадр обязан дойти до публикации.
+        double max_shift = 0.0;
+        for (unsigned int i = 0; i < cur_pts.size(); i++)
+            max_shift = std::max(max_shift, (double)cv::norm(forw_pts[i] - cur_pts[i]));
+        if (max_shift < 1e-3)
+            return;
         vector<uchar> status;
-        cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
+        try
+        {
+            cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
+        }
+        catch (const cv::Exception &e)
+        {
+            RCUTILS_LOG_WARN_THROTTLE(RCUTILS_STEADY_TIME, 5000,
+                                      "findFundamentalMat: %s — кадр без эпиполярного отбора", e.what());
+            return;
+        }
+        if (status.size() != cur_pts.size())
+            return;   // маски нет (вырожденный набор) — точки не трогаем
         int size_a = cur_pts.size();
         reduceVector(prev_pts, status);
         reduceVector(cur_pts, status);

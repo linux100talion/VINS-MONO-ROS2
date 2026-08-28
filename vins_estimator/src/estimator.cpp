@@ -117,9 +117,26 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
+// Патч 13.17 (2026-08-28): потолок all_image_frame в INITIAL. Ветка MARGIN_SECOND_NEW
+// в slideWindow() карту не чистит — на неподвижном борту (все кадры не-ключевые) она
+// растёт 10 кадр/с по ~40 КБ, а LinearAlignment/RefineGravity решают плотную (3N+4)²
+// LDLT: N≈1650 (3 мин на земле) → ~109 с на попытку инита (полёт короче — /odometry
+// нет вовсе), N≈25000 (45 мин) → матрица 45 ГБ → bad_alloc. MAX_INIT_FRAMES кадров
+// подряд без ключевого = стоим: сбрасываем состояние (то же, что /restart) — окно
+// наполнится заново за ~1 с, терять нечего, инит ещё не случился. Парный фикс —
+// лётная нода шлёт /restart по арму; этот — страховка на любой другой сценарий.
+static const int MAX_INIT_FRAMES = 300;
+
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::msg::Header &header)
 {
     RCUTILS_LOG_DEBUG("new image coming ------------------------------------------");
+    if (solver_flag == INITIAL && (int)all_image_frame.size() > MAX_INIT_FRAMES)
+    {
+        RCUTILS_LOG_WARN("all_image_frame=%zu кадров без ключевых (борт неподвижен?) — сброс окна инициализации",
+                         all_image_frame.size());
+        clearState();
+        setParameter();
+    }
     RCUTILS_LOG_DEBUG("Adding feature points %lu", image.size());
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
         marginalization_flag = MARGIN_OLD;
